@@ -66,7 +66,7 @@ mixin Constraint!(
             "equals".on("T").args("T").returns("T"));
 ```
 
-# Using Denomination-Constraints using D-Constraints
+# Using Denomination-Constraints using D-Constraints (An Example)
 
 Employing constraints can be done using D's native support for constraints on
 templated function/methods/templates. The two templates to use are `Where` and
@@ -143,5 +143,104 @@ unittest {
 }
 ```
 
+# Useful error messages
+
+To demonstrate the error messages this is the program we will try
+
+```d
+import genusdsl;
+import helpers;
+
+mixin Constraint!(
+    constraint("Eq")
+        .args("T")
+        .methods(
+            "equals".on("T").args("T").returns("bool")));
+
+mixin Constraint!(
+    constraint("Group")
+        .args("G")
+        .extends("Eq", "G")
+        .methods(
+            "identity".on("G").returns("G").statik,
+            "plus".on("G").args("G").returns("G"),
+            "inverse".on("G").returns("G")));
+
+
+bool checkIdentityProperties(T)(T elem = T.identity) if (Where!(Group, T)) {
+    T id = T.identity;
+    return id.equals(id.plus(id))
+        && id.equals(id.inverse)
+        && id.plus(elem).equals(elem) && elem.plus(id).equals(elem);
+}
+
+struct MyData {
+    // implementation will be here...
+}
+
+void main() {
+    import std.stdio;
+    writefln("Check passed = %s", checkIdentityProperties!MyData);
+}
+```
+
+## Missing method
+
+```d
+struct MyData {}
+```
+
+```
+genusdsl.d(69): Error: static assert:  "Constraint Group requires MyData to implement the method identity"
+```
+
+## Non-static method should be static
+```d
+struct MyData {
+    bool identity(int data) { return true; }
+}
+```
+
+```
+genusdsl.d(37): Error: static assert:  "Constraint Group(G) requires that identity be static"
+```
+
+## Wrong return type
+```d
+struct MyData {
+    static bool identity(int data) { return true; }
+}
+```
+
+```
+genusdsl.d(59): Error: static assert:  "Expected return type of identity to be MyData instead found bool"
+```
+
+## Wrong arguments
+```d
+struct MyData {
+    static MyData identity(int data) { return MyData(); }
+}
+```
+
+```
+genusdsl.d(49): Error: static assert:  "Argument mismatch between Group(G)'s identity and MyData's: expected () instead found (int)"
+```
+
+## Missing method from super-constraint (parent constraint)
+```d
+struct MyData {
+    static MyData identity() { return MyData(); }
+    MyData plus(MyData d) { return this; }
+    MyData inverse() { return this; }
+}
+```
+
+```
+genusdsl.d(69): Error: static assert:  "Constraint Eq (from Group) requires MyData to implement the method equals"
+```
+
+
+# References
 
 [1] : The whitepaper for Genus can be found at https://www.semanticscholar.org/paper/a1d0c109155a9040f6b24355806f123744f3c841
