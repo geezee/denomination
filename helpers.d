@@ -1,4 +1,9 @@
 import std.conv;
+import std.typecons;
+import std.meta;
+import std.traits;
+import std.string;
+import std.algorithm.iteration;
 
 
 /***
@@ -35,6 +40,7 @@ __Cons constraint(string name) { return __Cons(name); }
 __Cons args(__Cons c, string[] args...) { c.argTypes = args; return c; }
 __Cons extends(__Cons c, string p, string[] pa...) { c.parent = p; c.parentArgs = pa; return c; }
 __Cons methods(__Cons c, __Method[] ms...) { c._methods = ms; return c; }
+
 
 
 
@@ -90,3 +96,84 @@ bool inTuple(alias element, T...)() {
     static if (T.length == 0) return false;
     else return element == T[0] || inTuple!(element, T[1..$]);
 }
+
+
+struct Generic(string name) {}
+
+template TypeToStringReplaceGenerics(T) {
+    alias Template = TemplateOf!T;
+    static if (__traits(isSame, Generic, Template)) {
+        enum TypeToStringReplaceGenerics = TemplateArgsOf!T[0];
+    } else static if (__traits(isSame, void, Template)) {
+        enum TypeToStringReplaceGenerics = T.stringof;
+    } else {
+        enum FullTemplateName = Template.stringof;
+        enum TemplateName = FullTemplateName[0..FullTemplateName.indexOf('(')];
+        enum TypeToStringReplaceGenerics = TemplateName ~ "!("
+            ~ TypeListToStringReplaceGenerics!(TemplateArgsOf!T) ~ ")";
+    }
+}
+
+
+template TypeListToStringReplaceGenerics(T...) {
+    static if (T.length == 0) {
+        enum TypeListToStringReplaceGenerics = "";
+    } else static if (T.length == 1) {
+        enum TypeListToStringReplaceGenerics = TypeToStringReplaceGenerics!(T[0]);
+    } else {
+        enum TypeListToStringReplaceGenerics =
+            TypeListToStringReplaceGenerics!(T[0])
+            ~ ", "
+            ~ TypeListToStringReplaceGenerics!(T[1..$]);
+    }
+}
+
+
+
+string WheresAsString(Wheres...)() {
+    static if (Wheres.length == 0) return "";
+    static if (Wheres.length == 1) {
+        static if (TemplateArgsOf!(Wheres[0]).length > 0) {
+            return "Where!(" ~ Wheres[0].CONSTRAINT ~ ", "
+                ~ TypeListToStringReplaceGenerics!(TemplateArgsOf!(Wheres[0])) ~ ")";
+        } else {
+            return "Where!(" ~ Wheres[0].CONSTRAINT ~ ")";
+        }
+        // return "Where!(" ~ TypeToStringReplaceGenerics!(Wheres[0]).tr("!",",") ~  ")";
+    } else {
+        return WheresAsString!(Wheres[0]) ~ " && " ~ WheresAsString!(Wheres[1..$]);
+    }
+}
+
+
+template ConstraintArguments(Constraints...) {
+    static if (Constraints.length == 0) {
+        alias ConstraintArguments = AliasSeq!();
+    } else static if (Constraints.length == 1) {
+        alias ConstraintArguments = NoDuplicates!(TemplateArgsOf!Constraints);
+    } else {
+        alias ConstraintArguments = NoDuplicates!(AliasSeq!(
+            ConstraintArguments!(Constraints[0]),
+            ConstraintArguments!(Constraints[1])));
+    }
+}
+
+
+string[] CollectGenerics(T)() {
+    static if (__traits(isSame, void, TemplateOf!T)) {
+        return [];
+    } else static if (__traits(isSame, Generic, TemplateOf!T)) {
+        return [TemplateArgsOf!T[0]];
+    } else {
+        alias Args = TemplateArgsOf!T;
+        static if (Args.length == 0) {
+            return [];
+        } else {
+            return CollectGenerics!(Args[0])
+                 ~ CollectGenerics!(Tuple!(Args[1..$]));
+        }
+    }
+}
+
+
+struct MethodImpl(string name, string impl) {}

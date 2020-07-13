@@ -103,7 +103,6 @@ class Set(T) if (Where!(Eq, T)) {
             elements ~= member;
             return;
         }
-        import std.stdio;
         size_t index(size_t start, size_t end) {
             if (start >= end) return end;
             size_t i = (start + end) / 2;

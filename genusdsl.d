@@ -2,6 +2,7 @@ import std.traits;
 import std.meta;
 import std.algorithm.iteration;
 import std.array;
+import std.string;
 
 import helpers;
 
@@ -101,4 +102,65 @@ template SatisfiesConstraint(bool showMessages, alias constraint, Args...) {
         enum SatisfiesConstraint = true;
     } else {
     }
+}
+
+
+mixin template Model(string mname, ModelArgs, alias Constraints, alias Wheres, Methods...) {
+    import std.traits;
+    alias TypesToExtend = ConstraintArguments!(TemplateArgsOf!Constraints);
+    static foreach (Type; TypesToExtend) {
+        mixin(ModelToClass!(mname, Type, Constraints, Wheres, Methods));
+    }
+}
+
+template ApplicableWhere(alias Type) {
+    import std.algorithm.searching : countUntil;
+    enum TypeGenerics = CollectGenerics!Type;
+    bool test(alias Where)() {
+        enum WhereGenerics = CollectGenerics!Where;
+        static foreach (g; WhereGenerics) {
+            if (TypeGenerics.countUntil(g) == -1) return false;
+        }
+        return true;
+    }
+}
+
+bool MethodApplicable(alias MethodImpl, alias Constraints, alias Type)() {
+    import std.traits;
+    enum methodName = TemplateArgsOf!MethodImpl[0];
+    static foreach (Constraint; TemplateArgsOf!Constraints) {
+        alias Method = __traits(getMember, Constraint, methodName);
+        alias TargetClass = Parameters!Method[0];
+        if (!is(Type == TargetClass)) return false;
+    }
+    return true;
+}
+
+string ModelToClass(string mname, alias Type, alias Constraints, alias Wheres, Methods...)() {
+    enum TypeName = TypeToStringReplaceGenerics!Type;
+    enum ExclMark = TypeName.indexOf('!');
+    enum ClassName = (ExclMark > 0) ? TypeName[0..ExclMark] ~ TypeName[ExclMark+1..$]
+                                    : TypeName ~ "()";
+    alias ApplicableWheres = Filter!(ApplicableWhere!Type.test, TemplateArgsOf!Wheres);
+
+    string bdy = "";
+    static foreach (Method; Methods) {
+        static if (MethodApplicable!(Method,Constraints,Type)) {
+            bdy ~= TemplateArgsOf!Method[1];
+        }
+    }
+
+    static if (ApplicableWheres.length > 0) {
+        return "class " ~ mname ~ "_" ~ ClassName ~ ": " ~ TypeName
+             ~ " if (" ~  WheresAsString!ApplicableWheres ~ ") {\n"
+             ~ bdy ~ "\n}";
+    } else {
+        return "class " ~ mname ~ "_" ~ ClassName ~ ": " ~ TypeName ~ " {\n" ~ bdy ~ "\n}";
+    }
+}
+
+
+mixin template UseModel(string modelName, alias obj) {
+    enum ID = __traits(identifier, obj);
+    mixin("auto " ~ ID ~ " = cast(" ~ modelName ~ "_" ~ typeof(obj).stringof ~ ") obj;");
 }
