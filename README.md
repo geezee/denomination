@@ -1,12 +1,12 @@
 # Denomination
 
-Denomination is an experimental implementation of Genus [1] in the DLang.
+Denomination is an experimental (proof of concept) implementation of Genus [1]
+in DLang.
 
-At the moment only constraints are supported, the only models used are the
-default models.
+Support for (non-default) models is limited and its API is very clunky.
 
 
-# Defining Constraints
+## Defining Constraints
 
 Constraints can be defined as follows:
 
@@ -53,7 +53,7 @@ constraint("GraphLike")
     ));
 ```
 
-# Declaring constraints
+## Declaring constraints
 
 Once a constraint is defined, it can be declared by mixing it in using the
 `Constraint` mixin-template like so:
@@ -66,7 +66,7 @@ mixin Constraint!(
             "equals".on("T").args("T").returns("T"));
 ```
 
-# Using Denomination-Constraints using D-Constraints (An Example)
+## Using Denomination-Constraints using D-Constraints (An Example)
 
 Employing constraints can be done using D's native support for constraints on
 templated function/methods/templates. The two templates to use are `Where` and
@@ -142,7 +142,7 @@ unittest {
 }
 ```
 
-# Useful error messages
+## Useful error messages
 
 To demonstrate the error messages this is the program we will try
 
@@ -183,7 +183,7 @@ void main() {
 }
 ```
 
-## Missing method
+### Missing method
 
 ```d
 struct MyData {}
@@ -193,7 +193,7 @@ struct MyData {}
 genusdsl.d(69): Error: static assert:  "Constraint Group requires MyData to implement the method identity"
 ```
 
-## Non-static method should be static
+### Non-static method should be static
 ```d
 struct MyData {
     bool identity(int data) { return true; }
@@ -204,7 +204,7 @@ struct MyData {
 genusdsl.d(37): Error: static assert:  "Constraint Group(G) requires that identity be static"
 ```
 
-## Wrong return type
+### Wrong return type
 ```d
 struct MyData {
     static bool identity(int data) { return true; }
@@ -215,7 +215,7 @@ struct MyData {
 genusdsl.d(59): Error: static assert:  "Expected return type of identity to be MyData instead found bool"
 ```
 
-## Wrong arguments
+### Wrong arguments
 ```d
 struct MyData {
     static MyData identity(int data) { return MyData(); }
@@ -226,7 +226,7 @@ struct MyData {
 genusdsl.d(49): Error: static assert:  "Argument mismatch between Group(G)'s identity and MyData's: expected () instead found (int)"
 ```
 
-## Missing method from super-constraint (parent constraint)
+### Missing method from super-constraint (parent constraint)
 ```d
 struct MyData {
     static MyData identity() { return MyData(); }
@@ -237,6 +237,136 @@ struct MyData {
 
 ```
 genusdsl.d(69): Error: static assert:  "Constraint Eq (from Group) requires MyData to implement the method equals"
+```
+
+
+# Models
+
+## Defining and declaring models
+
+### The simplest model: case insensitive Eq
+
+```d
+mixin Model!(
+    "StringCaseInsensitiveEq", Tuple!(),
+    Tuple!(Eq!MyStr),
+    Tuple!(),
+    MethodImpl!("equals", q{
+        bool equals(MyStr other) {
+            return this.contents.toLower == other.contents.toLower;
+        }
+    }));
+```
+
+### More complex example: Array should be cloneable if its contents are
+
+```d
+mixin Model!(
+    "ArrayListDeepCloneable", Tuple!(Generic!"E"),
+    Tuple!(Cloneable!(ArrayList!(Generic!"E"), MyStr)),
+    Tuple!(Cloneable!(Generic!"E", MyStr), Eq!MyStr),
+    MethodImpl!("clone", q{
+        ArrayList!E clone() {
+           auto result = new ArrayList!E();
+           foreach (m; parent.contents) result.add(m.clone);
+           return result;
+        }
+    }));
+```
+
+### Most complex example: The dual of a graph
+
+```d
+mixin Model!(
+    "DualGraph", Tuple!(Generic!"V", Generic!"E", Generic!"VId", Generic!"EId"),
+    Tuple!(GraphLike!(Generic!"V",Generic!"E",Generic!"VId",Generic!"EId")),
+    Tuple!(GraphLike!(Generic!"V",Generic!"E",Generic!"VId",Generic!"EId")),
+    MethodImpl!("src", q{ override VId src() { return parent.target(); } }),
+    MethodImpl!("target", q{ override VId target() { return parent.src(); } }),
+    MethodImpl!("outgoing", q{ override EId[] outgoing() { return parent.incoming(); } }),
+    MethodImpl!("incoming", q{ override EId[] incoming() { return parent.outgoing(); } }));
+```
+
+## Arguments of the `Model` template
+
+The arguments of the `Model` mixin are:
+
+1. The name of the model as a string
+2. The generic arguments of the model
+3. The constraints that the model is implementing
+4. The conditions (i.e. the `where` clauses) that must be satisfied on the model
+5. The methods: each method has a name, then its implementation (as a string)
+
+## Using models
+
+By default the model is always the default model, to use a model you must use
+the `UseModel` template that introduces (or overrides) the value that implements
+the model.
+
+If the constraints of the model depend directly on a generic, eg
+`Eq!(Generic!"T")` as opposed to `Eq!(ArrayList!(Generic!"T"))`, then you must
+provide explicitly the types to replace the generics.
+
+Hopefully these examples are illustrative:
+
+```d
+ArrayList!E doClone(E)(ArrayList!E lst) {
+    mixin UseModel!("lst", lst, ArrayListDeepCloneable!());
+    return lst.clone(); // lst now satisfies ArrayListDeepCloneable
+}
+```
+
+```d
+void useBothGraphAndItsDual(V,E,VId,EId)(V vertex, E edge)
+if (Where!(GraphLike,V,E,VId,EId)) {
+    writefln("The incoming and outgoing of `vertex` are: %s and %s",
+        vertex.incoming(), vertex.outgoing());
+    writefln("The src and target of `edge` are: %s and %s",
+        edge.src(), edge.target());
+
+    // dualVertex is the vertex described by the `V` generic in the `DualGraph` model
+    mixin UseModel!("dualVertex", vertex, DualGraph!(V, E, VId, EId), "V");
+    // dualEdge is the edge described by the `E` generic in the `DualGraph` model
+    mixin UseModel!("dualEdge", edge, DualGraph!(V, E, VId, EId), "E");
+
+    writefln("[dual] The incoming and outgoing of `vertex` are: %s and %s",
+        dualVertex.incoming(), dualVertex.outgoing());
+    writefln("[dual] The src and target of `edge` are: %s and %s",
+        dualEdge.src(), dualEdge.target());
+
+    mixin UseModel!("ddualVertex", dualVertex, DualGraph!(V, E, VId, EId), "V");
+    mixin UseModel!("ddualEdge", dualEdge, DualGraph!(V, E, VId, EId), "E");
+
+    writefln("[dual-dual] The incoming and outgoing of `vertex` are: %s and %s",
+        ddualVertex.incoming(), ddualVertex.outgoing());
+    writefln("[dual-dual] The src and target of `edge` are: %s and %s",
+        ddualEdge.src(), ddualEdge.target());
+}
+
+
+alias VertexId = uint;
+alias EdgeId = string;
+class Vertex {
+    EdgeId[] incoming() { return ["i1", "i2"]; }
+    EdgeId[] outgoing() { return ["o1", "o2"]; }
+}
+class Edge {
+    VertexId src() { return 0; }
+    VertexId target() { return 1; }
+}
+
+useBothGraphAndItsDual
+    !(Vertex,Edge,VertexId,EdgeId)
+    (new Vertex(), new Edge());
+
+/* OUTPUT IS:
+The incoming and outgoing of `vertex` are: ["i1", "i2"] and ["o1", "o2"]
+The src and target of `edge` are: 0 and 1
+[dual] The incoming and outgoing of `vertex` are: ["o1", "o2"] and ["i1", "i2"]
+[dual] The src and target of `edge` are: 1 and 0
+[dual-dual] The incoming and outgoing of `vertex` are: ["i1", "i2"] and ["o1", "o2"]
+[dual-dual] The src and target of `edge` are: 0 and 1
+*/
 ```
 
 
