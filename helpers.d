@@ -177,3 +177,23 @@ string[] CollectGenerics(T)() {
 
 
 struct MethodImpl(string name, string impl) {}
+
+string[] CollectGenericsFromConstraints(Constraints...)() {
+    string[] generics = [];
+    static foreach (C; Constraints) {
+        static foreach (T; TemplateArgsOf!C) {
+            static if (__traits(isSame, Generic, TemplateOf!T)) {
+                generics ~= (TemplateArgsOf!T)[0];
+            }
+        }
+    }
+    return generics;
+}
+
+
+bool TypeInList(S, Types...)() {
+    static foreach (T; Types) {
+        if (__traits(isSame, S, T)) return true;
+    }
+    return false;
+}

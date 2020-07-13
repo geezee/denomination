@@ -104,13 +104,20 @@ template SatisfiesConstraint(bool showMessages, alias constraint, Args...) {
     }
 }
 
+string generateModelCode(string mname, ModelArgs, Constraints, Wheres, Methods...)() {
+    alias TypesToExtend = ConstraintArguments!(TemplateArgsOf!Constraints);
+    enum Generics = CollectGenericsFromConstraints!(TemplateArgsOf!Constraints);
+    string output = "template " ~ mname ~ "(" ~ Generics.commaSeperate ~ ") {\n";
+    output ~= "enum NAME = `" ~ mname ~ "`;\n";
+    static foreach (Type; TypesToExtend) {
+        output ~= ModelToClass!(mname, Type, Constraints, Wheres, Methods) ~ "\n";
+    }
+    return output ~= "\n}";
+}
 
 mixin template Model(string mname, ModelArgs, alias Constraints, alias Wheres, Methods...) {
-    import std.traits;
-    alias TypesToExtend = ConstraintArguments!(TemplateArgsOf!Constraints);
-    static foreach (Type; TypesToExtend) {
-        mixin(ModelToClass!(mname, Type, Constraints, Wheres, Methods));
-    }
+    enum code = generateModelCode!(mname, ModelArgs, Constraints, Wheres, Methods);
+    mixin(code);
 }
 
 template ApplicableWhere(alias Type) {
@@ -143,12 +150,25 @@ string ModelToClass(string mname, alias Type, alias Constraints, alias Wheres, M
                                     : TypeName ~ "()";
     alias ApplicableWheres = Filter!(ApplicableWhere!Type.test, TemplateArgsOf!Wheres);
 
-    string bdy = "";
-    static foreach (Method; Methods) {
-        static if (MethodApplicable!(Method,Constraints,Type)) {
+    string bdy = TypeName ~ " parent; "
+               ~ "this(" ~ TypeName ~ " member) {
+                    import std.traits;
+                    alias TN = " ~ TypeName ~ ";
+                    // Call the right constructor
+                    static if (__traits(hasMember, TN, `__ctor`)) {
+                        alias SuperArgs = Parameters!(TN.__ctor);
+                        static if (SuperArgs.length > 0)
+                            super(Tuple!SuperArgs().expand);
+                    }
+                    // Copy all the properties
+                    static foreach (m; FieldNameTuple!TN)
+                        mixin(`this.` ~ m ~ ` = member.` ~ m ~ `;`);
+                    this.parent = member;
+                  }";
+
+    static foreach (Method; Methods)
+        static if (MethodApplicable!(Method,Constraints,Type))
             bdy ~= TemplateArgsOf!Method[1];
-        }
-    }
 
     static if (ApplicableWheres.length > 0) {
         return "class " ~ mname ~ "_" ~ ClassName ~ ": " ~ TypeName
@@ -160,7 +180,10 @@ string ModelToClass(string mname, alias Type, alias Constraints, alias Wheres, M
 }
 
 
-mixin template UseModel(string modelName, alias obj) {
-    enum ID = __traits(identifier, obj);
-    mixin("auto " ~ ID ~ " = cast(" ~ modelName ~ "_" ~ typeof(obj).stringof ~ ") obj;");
+mixin template UseModel(alias dest, alias src, alias Model, string generic="") {
+    import std.traits;
+    enum Class = generic.length == 0 ? typeof(src).stringof : generic ~ "!()";
+    enum code = "auto " ~ dest ~ " = new " ~ Model.stringof ~ "." ~ Model.NAME ~ "_"
+    ~ Class ~ "(src);";
+    mixin(code);
 }
